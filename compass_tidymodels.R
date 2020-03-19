@@ -97,11 +97,46 @@ generate_test_recipe = function(x) {
   df_test_recipes
 }
 test_recipes = generate_test_recipe(train_recipes)
+rand_forest()
+# building our models
+classification_model_list = list("random_forest" = rand_forest(mode = "classification"), 
+                   "decision_tree" = decision_tree(mode = "classification"),
+                   "xgboost" = boost_tree(mode = "classification"))
+classification_model_list[[1]]
 
-# building our engines
+# engine_list = list("random_forest" = "ranger",
+#                    "decision_tree" = "rpart"
+#                    )
+
+### Still to do
+#### 1. Account for nested tasks (need another for loop or something)
+#### 2. Develop a tuning scheme
+#### 3. Add the imp/interp fxs from my pres in 
+#### 4. Drake it 
+
+# generate our models (currently using default engines)
+enginer = function(x, models = NA) {
+  generated_models = c()
+  for (i in 1:length(models)) {
+    generated_models[[i]] = models[[i]] %>% 
+      # set_engine(engines[[i]]) %>% 
+      fit(score_text ~., data = x)
+  }
+  generated_models
+}
+fit_models = enginer(juiced_train_data[[1]], models = classification_model_list)
+
+fit_models[[1]] %>% 
+  predict(test_recipes[[1]]) %>% 
+  bind_cols(test_recipes[[1]]) %>% 
+  metrics(truth = score_text, estimate = .pred_class)
+
+
+
+
 rand_forest(mode = "classification") %>% 
   set_engine("ranger") %>% 
-  fit(score_text ~ ., data = df_train_data[[1]])
+  fit(score_text ~ ., data = juiced_train_data[[1]])
 
 learners = c("random_forest" = rand_forest(mode = "classification") %>% 
                set_engine("ranger") %>% 
