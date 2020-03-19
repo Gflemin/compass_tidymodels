@@ -11,25 +11,38 @@ library(pacman)
 source(here::here("libraries.R"))
 
 # get the data
-loader2 = function() {
-  df= read_csv(here::here("data/compas-scores-raw.csv"))
+loader = function() {
+  df = read_csv(here::here("data/compas-scores-raw.csv")) %>% 
+    clean_names() %>% 
+    mutate(date_of_birth = year(mdy(date_of_birth))) %>%   # had to move all the date stuff here to avoid a factor issue in bake step
+    mutate(date_of_birth = as.character(date_of_birth)) %>%
+    mutate(date_of_birth = 2014 - as.numeric(str_replace(date_of_birth, "^(20)", "19"))) %>%
+    mutate(date_of_birth = case_when(
+      ((25 <= date_of_birth) & (date_of_birth <= 45)) ~ "25 to 45",
+      (date_of_birth < 25) ~ "Younger than 25",
+      (date_of_birth > 45) ~ "Older than 45"
+    ))
   df
 }
-df_raw = loader2()
+df_raw = loader()
 
 # save the cols we want to keep
-good_cols = c("Person_ID", "AssessmentID", "Sex_Code_Text", "Ethnic_Code_Text", "DateOfBirth", "CustodyStatus", "DisplayText",
-              "MaritalStatus", "ScoreText") # exhaustive
+good_cols = c("person_id", "assessment_id", "sex_code_text", "ethnic_code_text", "date_of_birth", "custody_status", "display_text",
+              "marital_status", "score_text") # exhaustive
 
 # get distinct prediction tasks
 tasks = df_raw %>% 
-  select(DisplayText) %>% 
+  select(display_text) %>% 
   distinct() %>% 
   pull()
-  
+
+# split our data
+df_split = rsample::initial_split(df_raw, prop = 0.8)
+
 # build and prep a recipe for our data 
 prepper = function(x, good_cols = list(NA), grouping_var, category = NA) {
   x %>% 
+    training() %>% 
     select(all_of(good_cols)) %>% 
     clean_names() %>% 
     group_by({{grouping_var}}) %>% 
@@ -39,14 +52,6 @@ prepper = function(x, good_cols = list(NA), grouping_var, category = NA) {
     column_to_rownames() %>% 
     select(-{{grouping_var}}, -display_text, -person_id) %>% 
     ungroup() %>% 
-    mutate(date_of_birth = year(mdy(date_of_birth))) %>%
-    mutate(date_of_birth = as.character(date_of_birth)) %>%
-    mutate(date_of_birth = 2014 - as.numeric(str_replace(date_of_birth, "^(20)", "19"))) %>%
-    mutate(date_of_birth = case_when(
-      ((25 <= date_of_birth) & (date_of_birth <= 45)) ~ "25 to 45",
-      (date_of_birth < 25) ~ "Younger than 25",
-      (date_of_birth > 45) ~ "Older than 45"
-    )) %>%
     recipe(score_text ~ .) %>%  # recipes doesn't behave well with curly curly yet, otherwise I would put this in a target arg
     step_filter(
       ethnic_code_text %in% c("African-American", "Caucasian", "Hispanic"),
@@ -59,43 +64,53 @@ prepper = function(x, good_cols = list(NA), grouping_var, category = NA) {
     prep() # great, it works
 }
 
+# assign each of our unique prepped recipes for the prediction tasks to a list 
+generate_train_recipe = function(x) {
+  df_train_recipes = c()
+  for (i in tasks) {
+    df_train_recipes[[i]] = prepper(x, good_cols = good_cols, assessment_id, category = i)
+  } # produces 3 multiclass classification tasks 
+  names(df_train_recipes) = tasks
+  df_train_recipes
+}
+train_recipes = generate_train_recipe(df_split)
+
+# actually get the train data out
+juicer = function(x) {
+  df_train_data = c()
+  for (i in 1:length(x)) {
+    df_train_data[[i]] = juice(x[[i]])
+  }
+  names(df_train_data) = tasks
+  df_train_data
+}
+juiced_train_data = juicer(train_recipes)
+
 # assign each of our unique prediction tasks to a list 
-nu_list = c()
-for (i in tasks) {
-  nu_list[[i]] = prepper(df_raw, good_cols = good_cols, assessment_id, category = i)
-} # produces 3 multiclass classification tasks 
-nu_list
-
-
-
-
-
-### OK, it looks like I should be able to duplicate the data cleaning code completely in recipes. lets try!
-
-
-
-# Classification tasker
-tasker_class = function(data, id, target) { # data: df produced by combiner (dataframe), id: identifier for the new task (string), target: column in df 
-  # that corresponds to the target vector of our model (vector)
-  task = TaskClassif$new(id = id, backend = data, target = target)
-  task
+generate_test_recipe = function(x) {
+  df_test_recipes = c()
+  for (i in 1:length(x)) {
+    df_test_recipes[[i]] = x[[i]] %>% 
+      bake(testing(df_split)) 
+  }
+  names(df_test_recipes) = tasks
+  df_test_recipes
 }
+test_recipes = generate_test_recipe(train_recipes)
 
-# Regression tasker
-tasker_regr = function(data, id, target) { # data: df produced by combiner (dataframe), id: identifier for the new task (string), target: column in df 
-  # that corresponds to the target vector of our model (vector)
-  task = TaskRegr$new(id = id, backend = data, target = target)
-  task
+# building our engines
+rand_forest(mode = "classification") %>% 
+  set_engine("ranger") %>% 
+  fit(score_text ~ ., data = df_train_data[[1]])
+
+learners = c("random_forest" = rand_forest(mode = "classification") %>% 
+               set_engine("ranger") %>% 
+               fit(score_text ~ ., data = training(df_train_recipes[["Risk of Failure to Appear"]])))
+enginerator = function(x) {
+  c("random_forest" = rand_forest(mode = "classification") %>% 
+      set_engine("ranger") %>% 
+      fit(score_text ~ ., data = df_train_recipes[["Risk of Failure to Appear"]]))
 }
-
-# wrap our data into a mlr3 "task" object 
-violence_task = tasker_class(violence_data, id = "assessment_id", target = "score_text")
-
-# choose our mlr3 learers
-lrn_list_classif = c("classif.rpart", "classif.ranger")
-
-# generate our mlr3 learners 
-learners = learn_gener(lrn_list_classif)
 
 
 ######################################################################## JUNK ########################################################################
