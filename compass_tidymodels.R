@@ -97,41 +97,50 @@ generate_test_recipe = function(x) {
   df_test_recipes
 }
 test_recipes = generate_test_recipe(train_recipes)
-rand_forest()
+
 # building our models
 classification_model_list = list("random_forest" = rand_forest(mode = "classification"), 
                    "decision_tree" = decision_tree(mode = "classification"),
-                   "xgboost" = boost_tree(mode = "classification"))
-classification_model_list[[1]]
+                   "xgboost" = boost_tree(mode = "classification"),
+                   "glmnet" = logistic_reg(mode = "classification"))
 
-# engine_list = list("random_forest" = "ranger",
-#                    "decision_tree" = "rpart"
-#                    )
+# ???
+enginer3 = function(x, models = classification_model_list) {
+  generated_models = c()
+  for (i in 1:length(models)) {
+    generated_models[[i]] = models[[i]] %>% 
+      fit(score_text ~., data = x)
+  }
+  generated_models
+}
+fit_model_tibble = map(juiced_train_data, enginer3)
 
+# holder = list()
+# for (i in 1:length(fit_model_tibble[[1]])) {
+#   holder[[i]] = fit_model_tibble[[1]][[i]] %>% 
+#     predict(test_recipes[[i]]) %>%
+#     bind_cols(test_recipes[[i]])
+# } # need to go one level out
+
+holder2 = list()
+for (i in 1:length(fit_model_tibble)) {
+  inner_model_list = fit_model_tibble[[i]] # list
+  holder = list()
+  for (j in 1:length(inner_model_list)) {
+    holder[[j]] = inner_model_list[[j]] %>% 
+      predict(test_recipes[[i]]) %>%
+      bind_cols(test_recipes[[i]])
+  }
+  holder2 = c(holder2, holder)
+} 
+holder2
+
+  
 ### Still to do
 #### 1. Account for nested tasks (need another for loop or something)
 #### 2. Develop a tuning scheme
 #### 3. Add the imp/interp fxs from my pres in 
 #### 4. Drake it 
-
-# generate our models (currently using default engines)
-enginer = function(x, models = NA) {
-  generated_models = c()
-  for (i in 1:length(models)) {
-    generated_models[[i]] = models[[i]] %>% 
-      # set_engine(engines[[i]]) %>% 
-      fit(score_text ~., data = x)
-  }
-  generated_models
-}
-fit_models = enginer(juiced_train_data[[1]], models = classification_model_list)
-
-fit_models[[1]] %>% 
-  predict(test_recipes[[1]]) %>% 
-  bind_cols(test_recipes[[1]]) %>% 
-  metrics(truth = score_text, estimate = .pred_class)
-
-
 
 
 rand_forest(mode = "classification") %>% 
@@ -266,4 +275,124 @@ violence_recipe = df_raw %>%
   step_mutate_at(all_nominal(), fn = factor) %>% 
   step_mutate_at(all_nominal(), fn = fct_drop) %>% 
   step_dummy(all_nominal(), -score_text, one_hot = TRUE) # great, it works 
+
+
+# generate our models (currently using default engines)
+enginer = function(x, models = NA) {
+  generated_models = c()
+  for (i in 1:length(models)) {
+    generated_models[[i]] = models[[i]] %>% 
+      fit(score_text ~., data = x)
+  }
+  generated_models
+}
+fit_models = enginer(juiced_train_data[[1]], models = classification_model_list)
+class(fit_models[[1]]) 
+# generate our models (currently using default engines)
+enginer2 = function(x, models = NA) {
+  generated_models = c()
+  for (i in 1:length(x)) {
+    for (j in 1:length(models)) {
+      generated_models[[i, j]] = models[[j]] %>%
+        fit(score_text ~., data = x[[i]])
+    }
+  }
+  generated_models
+}
+fit_models2 = enginer2(juiced_train_data, models = classification_model_list)
+
+# generate our models (currently using default engines)
+enginer3 = function(x) {
+  x %>% fit(score_text ~., data = )
+}
+
+a = enframe(juiced_train_data) 
+b = enframe(classification_model_list) 
+
+map(1:nrow(juiced_train_data), ~{ 
+  i <- .x
+  map(classification_model_list, ~ {
+    model <- .x
+    fit(model, score_text ~., data = x[[i]])
+  })
+})
+
+
+### As of now, having a very difficult time doing this R-style with dataframes. Containing that work here so that I can build a 
+### temporary list implementation
+fit_model_tibble = map(juiced_train_data, enginer3) %>% 
+  enframe()
+
+a = fit_model_tibble %>% 
+  mutate(recipes = test_recipes) %>% 
+  unnest(value)
+a
+map(a, function(x) x$value %>% 
+      predict(x$recipes) %>% 
+      bind_cols(x) %>% 
+      metrics(truth = score_text, estimate = .pred_class)
+)
+a %>% 
+  select(value)
+a %>% 
+  select(value) %>% 
+  predict(a$recipes)
+
+fit_models[[1]] %>% 
+  predict(test_recipes[[1]]) %>% 
+  bind_cols(test_recipes[[1]]) #%>% 
+metrics(truth = score_text, estimate = .pred_class)
+
+
+fit_model_tibble %>% 
+  group_by(name) %>% 
+  group_split()
+
+
+
+a = fit_model_tibble %>% 
+  pull(value) %>% 
+  extract2(1) 
+predict(a, test_recipes[[1]]) %>% 
+  bind_cols(test_recipes[[1]]) %>% 
+  metrics(truth = score_text, estimate = .pred_class) 
+
+library(magrittr)
+predictor = function(x) {
+  x %>% 
+    pull(2) %>% 
+    extract2()
+  
+}
+
+
+fit_model_tibble %>% 
+  mutate(name = str_remove(name, "[0-9]")) %>% 
+  group_by(name) %>% 
+  mutate()
+
+library(magrittr)
+fit_model_tibble %>% 
+  pull(value) %>% 
+  extract2(1) %>% 
+  class
+predict(fit_model_tibble[1, 2] %>% pull(), test_recipes[[1]])
+
+a = fit_model_tibble[1, 2] %>% 
+  pull()
+class(a)
+predict(a, new_data = test_recipes[[1]])
+class(test_recipes)
+# get a tibble of predictions 
+predict(fit_models[[1]], test_recipes[[1]])
+
+# take the tibble of predictions and estimate metrics 
+fit_models[[1]] %>% 
+  predict(test_recipes[[1]]) %>% 
+  bind_cols(test_recipes[[1]]) %>% 
+  metrics(truth = score_text, estimate = .pred_class)
+
+###
+
+
 
