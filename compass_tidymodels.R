@@ -115,13 +115,7 @@ enginer3 = function(x, models = classification_model_list) {
 }
 fit_model_tibble = map(juiced_train_data, enginer3)
 
-# holder = list()
-# for (i in 1:length(fit_model_tibble[[1]])) {
-#   holder[[i]] = fit_model_tibble[[1]][[i]] %>% 
-#     predict(test_recipes[[i]]) %>%
-#     bind_cols(test_recipes[[i]])
-# } # need to go one level out
-
+# predict on the test set and assign names properly 
 holder2 = list()
 for (i in 1:length(fit_model_tibble)) {
   inner_model_list = fit_model_tibble[[i]] # list
@@ -129,18 +123,31 @@ for (i in 1:length(fit_model_tibble)) {
   for (j in 1:length(inner_model_list)) {
     holder[[j]] = inner_model_list[[j]] %>% 
       predict(test_recipes[[i]]) %>%
-      bind_cols(test_recipes[[i]])
+      bind_cols(test_recipes[[i]]) %>% 
+      metrics(truth = score_text, estimate = .pred_class) # seems to work (get diff estimates), but get a few 0s for the kap measure
+    names(holder) = rep(tasks[[i]], length(holder))
   }
   holder2 = c(holder2, holder)
 } 
-holder2
 
-  
+# put everything in a tibble
+a = fit_model_tibble %>% 
+  unlist(recursive = FALSE) %>% 
+  enframe() %>% 
+  mutate(model = rep(names(classification_model_list), length(tasks))) %>% 
+  mutate(metrics = holder2) %>% 
+  mutate(name = str_remove(name, "[0-9]")) %>% 
+  select(name, model, value, metrics) %>% 
+  rename(task = name, fit = value) # some kappa 0s (maybe because some classes just never happen for those tasks?)
+
+
 ### Still to do
-#### 1. Account for nested tasks (need another for loop or something)
-#### 2. Develop a tuning scheme
-#### 3. Add the imp/interp fxs from my pres in 
-#### 4. Drake it 
+#### 0. Get metrics() fx to produce the correct multiclass metrics (multiclass mn_log_loss and Hand-Till roc_auc)
+#### 1. Break out metrics and test dataframe + preds as different columns 
+#### 2. Split metrics into train and test metrics 
+#### 3. Develop a tuning scheme
+#### 4. Add the imp/interp fxs from my pres in 
+#### 5. Drake it 
 
 
 rand_forest(mode = "classification") %>% 
@@ -155,6 +162,7 @@ enginerator = function(x) {
       set_engine("ranger") %>% 
       fit(score_text ~ ., data = df_train_recipes[["Risk of Failure to Appear"]]))
 }
+
 
 
 ######################################################################## JUNK ########################################################################
